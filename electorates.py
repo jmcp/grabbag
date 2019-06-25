@@ -172,7 +172,12 @@ if __name__ == "__main__":
         # Ensure that we strip off the altitude and any erroneous
         # leading null elements before we add the record
         llalt = place.findAll(coordname)[0].string.split(" ")
-        coords = [x.split(",")[0:2] for x in llalt if len(x) > 1]
+        #
+        # This mouthful ensures that we stores the floating point
+        # values for lat/long, rather than string forms. Trust me,
+        # it will consumers of this db much happier.
+        coords = [list(map(float, x.split(",")[0:2])) for x in
+                  llalt if len(x) > 1]
         #
         # This is effectively a cast to void, because we're not
         # *really* interested in any returned document. At this point,
