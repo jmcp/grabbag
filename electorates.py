@@ -70,7 +70,7 @@ electorates.py -h
     with 'federal' to cover the whole country. Local government area
     boundaries are not supported.
 
-    prefix is optional, and is for the output filename
+    prefix is optional, and if supplied is for the output filename.
 
 """
 
@@ -92,6 +92,42 @@ def usage():
     """ Provides the usage statement for this utility """
     print(__doc__)
     print(usagestr)
+
+
+def getName(where):
+    """
+    Callout function to find the name field, given that we've got several
+    different schema forms to check.
+    """
+    useName = where.find("name")
+    if useName:
+        return useName.string
+
+    useAttrName = where.find("SimpleData", attrs={"name":"ELECTORATE"})
+    if useAttrName:
+        return useAttrName.string
+
+    useAttrNAME = where.find("SimpleData", attrs={"name": "DISTRICT_NAME"})
+    if useAttrNAME:
+        return useAttrNAME.string
+
+    useDiv = where.find("ogr:Elect_div")
+    if useDiv:
+        return useDiv.string
+
+    useOgrName = where.find("ogr:Name")
+    if useOgrName:
+        return useOgrName.string
+
+    useOgrNAME = where.find("ogr:NAME")
+    if useOgrNAME:
+        return useOgrNAME.string
+
+    useOgrname = where.find("ogr:name")
+    if useOgrname:
+        return useOgrname.string
+    
+    return "Unable to find a supported Tag, please check the schema."
 
 
 if __name__ == "__main__":
@@ -132,32 +168,13 @@ if __name__ == "__main__":
 
     # Now we start the interesting bits
     ksoup = BeautifulSoup(kmlf.read(), "xml")
-    # Is this a proper KML, or is it an ogr2ogr-converted mapinfo thing?
-    iskml = ksoup.find("kml")
-    ogrName = "name"
-    # These are modified for ogr-formatted files
-    placemark = "Placemark"
-    coordname = "coordinates"
-    if not iskml:
-        ogrFC = ksoup.find("ogr:FeatureCollection").attrs
-        if not ogrFC:
-            print("Input file {0} does not appear to be a KML "
-                  "or ogr2ogr-converted file. Exiting.".format(kmlf.name))
-            sys.exit(11)
-        # Now we need to figure out if we need ogr:NAME or ogr:Name etc
-        # for the name of the electorate
-        if ksoup.find("ogr:Elect_div"):
-            # federal
-            ogrName = "ogr:Elect_div"
-        elif ksoup.find("ogr:Name"):
-            ogrName = "ogr:Name"
-        elif ksoup.find("ogr:NAME"):
-            ogrName = "ogr:NAME"
-        elif ksoup.find("ogr:name"):
-            ogrName = "ogr:name"
-        else:
-            print("Unable to determine ogr Name field case. Exiting")
-            sys.exit(11)
+
+    # Is this KML (and if so, which sort?), or is it an ogr2ogr-converted
+    # mapinfo thing?
+    if ksoup.find("kml"):
+        placemark = "Placemark"
+        coordname = "coordinates"
+    else:
         placemark = "gml:featureMember"
         coordname = "gml:coordinates"
 
@@ -167,7 +184,11 @@ if __name__ == "__main__":
     dbc = client.Electoratesdb.coll
 
     for place in ksoup.findAll(placemark):
-        ename = place.find(ogrName).string.title()
+        ename = getName(place).title()
+        if terr == "federal":
+            tstate = place.find("ogr:State").string
+        else:
+            tstate = terr.upper()
         #
         # Ensure that we strip off the altitude and any erroneous
         # leading null elements before we add the record
@@ -175,7 +196,7 @@ if __name__ == "__main__":
         #
         # This mouthful ensures that we stores the floating point
         # values for lat/long, rather than string forms. Trust me,
-        # it will consumers of this db much happier.
+        # it will make consumers of this db much happier.
         coords = [list(map(float, x.split(",")[0:2])) for x in
                   llalt if len(x) > 1]
         #
@@ -183,9 +204,14 @@ if __name__ == "__main__":
         # *really* interested in any returned document. At this point,
         # at any rate.
         dbc.find_one_and_update(
-            {"locality": ename, "jurisdiction": terr},
+            {"locality": ename, "jurisdiction": tstate},
             {'$set': {"coords": coords}},
             upsert=True)
+        electorates[ename] = {
+            "locality": ename,
+            "jurisdiction": tstate,
+            "coords": coords
+        }
 
     with open(outf, "w") as outfile:
         outfile.write(json.dumps(electorates))
